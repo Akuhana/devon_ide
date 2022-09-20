@@ -26,17 +26,88 @@ cd "${DEVON_IDE_HOME}" || exit 255
 # $1: plugin feature group ID
 # $2: plugin URL (update site)
 function doInstallEclipsePlugin() {
+  # Remove feature.group from each plugin name
+  local plugins="${1//.feature.group/}"
   local plugin="${1/\.feature\.group*/}"
-  echo "Installing eclipse plugin ${plugin} from ${2}"
-  # shellcheck disable=SC2086
-  "${ECLIPSE_HOME}/eclipse" -nosplash -vm "${ECLIPSE_JAVA_HOME}/bin/java" -application org.eclipse.equinox.p2.director -repository "${2}" -installIU "${1}" -vmargs ${ECLIPSE_VMARGS}
-  result=${?}
-  if [ "${result}" != 0 ]
+  echo "Installing Eclipse IDE plugins ${plugins} from URL ${2}"
+
+
+  # # Verify that the plugin is not already installed
+  # plugins=$(${ECLIPSE_HOME}/eclipse -nosplash -vm "${ECLIPSE_JAVA_HOME}/bin/java" -application org.eclipse.equinox.p2.director -list -repository "${2}" -listFormat mylyn)
+  # #plugins=$(${ECLIPSE_HOME}/eclipse -nosplash -vm "${ECLIPSE_JAVA_HOME}/bin/java" -application org.eclipse.equinox.p2.director -list Q:group -repository "${2}")
+  # doEcho "Available plugins: ${plugins}"
+  # # https://www.eclipse.org/forums/index.php/t/291253/
+  # #"${ECLIPSE_HOME}/eclipse" -nosplash -clean -vm "${ECLIPSE_JAVA_HOME}/bin/java" -application org.eclipse.equinox.p2.director -repository "${2}" -installIU "${1}" -tag InitialState -profile SDKProfile -profileProperties org.eclipse.update.install.features=true -destination "${ECLIPSE_HOME}" -bundlepool "${ECLIPSE_HOME}" -roaming -vmargs ${ECLIPSE_VMARGS}
+  # # Install plugin using p2 provisioning commands 
+  # #"${ECLIPSE_HOME}/eclipse" -console -nosplash -vm "${ECLIPSE_JAVA_HOME}/bin/java" 
+  # return
+
+  # local plugin_dir="${DEVON_IDE_HOME}/software/eclipse/plugins"
+  # # Check if plugin is already installed with eclipse -listInstalledPlugins command
+  # #installed_plugins="$(${ECLIPSE_HOME}/eclipse -nosplash -vm ${ECLIPSE_JAVA_HOME}/bin/java -application org.eclipse.equinox.p2.director -list)"
+  # # List all the IUs that are found in the given repository
+  # #installed_plugins="$(${ECLIPSE_HOME}/eclipse -nosplash -vm ${ECLIPSE_JAVA_HOME}/bin/java -application org.eclipse.equinox.p2.director -list -repository ${2})"
+  # # Get all the available IUs that are found in the given repository with p2.director
+  # plugins=$(${ECLIPSE_HOME}/eclipse -nosplash -vm "${ECLIPSE_JAVA_HOME}/bin/java" -application org.eclipse.equinox.p2.director -list -repository "${2}")
+  # doEcho "Available plugins: ${plugins}"
+  # # ${ECLIPSE_HOME}/eclipse -nosplash -vm "${ECLIPSE_JAVA_HOME}/bin/java" -application org.eclipse.equinox.p2.director -list -repository "${2}" | grep -o -E "feature\.group:${plugin}.*" | while read -r line; do
+  # #   # Check if plugin is already installed
+  # #   if [[ "${installed_plugins}" != *"${line}"* ]]; then
+  # #     echo "Installing ${line}"
+  # #     ${ECLIPSE_HOME}/eclipse -nosplash -vm "${ECLIPSE_JAVA_HOME}/bin/java" -application org.eclipse.equinox.p2.director -repository "${2}" -installIU "${line}" -destination "${ECLIPSE_HOME}" -profile SDKProfile
+  # #   else
+  # #     echo "Plugin ${line} already installed"
+  # #   fi
+  # # done
+  # # List all installed plugins
+  # #installed_plugins="$(${ECLIPSE_HOME}/eclipse -nosplash -vm ${ECLIPSE_JAVA_HOME}/bin/java -application org.eclipse.equinox.p2.director -listFormat "%i%n" -listInstalledRoots  2>/dev/null)"
+  # doEcho "Installed plugins: ${installed_plugins}"
+  # return
+
+  local plugin_dir="${DEVON_IDE_HOME}/software/eclipse/plugins"
+  # Remove feature from plugin variable
+  local original_plugin=${plugin}
+  local plugin=${plugin/\.feature*/}
+  local plugin_dependencies=$(ls -1 "${plugin_dir}" | grep -o -E "${plugin}\..*\.jar")
+  # Remove last word after dot
+  while [[ "${plugin}" == *.* ]]; do
+    if [ ${plugin} == "org.eclipse" ] || [ ${plugin} == "com" ] || [ ${plugin} == "org" ]; then
+      break
+    fi
+    local new_plugin_dependencies=$(ls -1 "${plugin_dir}" | grep -o -E "${plugin}\..*\.jar")
+    if [ -n "${new_plugin_dependencies}" ] 
+    then
+      plugin_dependencies="${plugin_dependencies}\n${new_plugin_dependencies}"
+    fi
+    plugin=${plugin%.*}
+  done
+
+  if [ -n "${plugin_dependencies}" ]
   then
-    doEchoAttention "Installation of plugin ${plugin} failed. Please try to install manually or rerun setup (devon eclipse setup)."
+    plugin_dependencies=$(echo -e "${plugin_dependencies}" | sort -u)
+    doWarning "Plugin ${original_plugin} might be already installed, because of existing dependencies: \n${plugin_dependencies} \nMake sure the plugin is not already installed by checking the list of installed plugins in the Eclipse IDE. If there's an error and the issue persists, try to remove the plugin manually from the plugins folder or uninstall with the remove-plugin command."
   fi
-  return "${result}"
+
+  # Verify that the plugin can be installed with option -verifyOnly
+  # debug_info=$("${ECLIPSE_HOME}/eclipse" -nosplash -vm "${ECLIPSE_JAVA_HOME}/bin/java" -application org.eclipse.equinox.p2.director -repository "${2}" -installIU "${1}")
+  # return
+  # shellcheck disable=SC2086
+  #"${ECLIPSE_HOME}/eclipse" -nosplash -clean -vm "${ECLIPSE_JAVA_HOME}/bin/java" -application org.eclipse.equinox.p2.director -repository "${2}" -installIU "${1}" -tag InitialState -profile SDKProfile -profileProperties org.eclipse.update.install.features=true -destination "${ECLIPSE_HOME}" -bundlepool "${ECLIPSE_HOME}" -roaming -vmargs ${ECLIPSE_VMARGS}
+  local debug_info=$("${ECLIPSE_HOME}/eclipse" -nosplash -clean -vm "${ECLIPSE_JAVA_HOME}/bin/java" -application org.eclipse.equinox.p2.director -repository "${2}" -installIU "${1}" -tag InitialState -profileProperties org.eclipse.update.install.features=true -destination "${ECLIPSE_HOME}" -bundlepool "${ECLIPSE_HOME}" -roaming -vmargs ${ECLIPSE_VMARGS})
+  if [ "${debug_info}" != 0 ]
+  then
+    echo
+    doError "Installation of plugin ${plugin} failed. Please try to install manually or rerun setup (devon eclipse setup)."
+    echo
+    return 1
+  fi
+  return 0
 }
+
+function doRemovePlugin() {
+  "${ECLIPSE_HOME}/eclipse" -nosplash -clean -vm "${ECLIPSE_JAVA_HOME}/bin/java" -application org.eclipse.equinox.p2.director -uninstallIU "${1}" -tag InitialState -profile SDKProfile -profileProperties org.eclipse.update.install.features=true -vmargs ${ECLIPSE_VMARGS}
+}
+
 
 function doSetup() {
   doDevonCommand java setup silent
@@ -198,12 +269,6 @@ function doAddPlugin() {
     elif [ "${1}" = "checkstyle" ]
     then
       doInstallEclipsePlugin "net.sf.eclipsecs.feature.group" "https://checkstyle.org/eclipse-cs-update-site"
-    elif [ "${1}" = "github" ]
-    then
-      doInstallEclipsePlugin "org.eclipse.mylyn.github.feature.feature.group" "https://download.eclipse.org/egit/github/updates/"
-    elif [ "${1}" = "soapui" ]
-    then
-      doInstallEclipsePlugin "com.eviware.soapui.soapui_feature.feature.group" "http://www.soapui.org/eclipse/update/"
     else
       doAddPluginFromConfig "${SETTINGS_PATH}/eclipse/plugins/${1}.properties" "force-manual"
     fi
@@ -309,6 +374,7 @@ then
   echo " --all                           if provided as first arg then to command will be invoked for each workspace"
   echo " setup                           setup Eclipse (install or update)"
   echo " add-plugin «id» [«url»]         install an additional plugin"
+  echo " remove-plugin «id»              remove an installed plugin"
   echo " run | start                     launch Eclipse IDE (default if no argument is given)"
   echo " ws-up[date]                     update eclipse workspace"
   echo " ws-re[verse]                    reverse merge changes from workspace into settings"
@@ -360,6 +426,11 @@ do
   then
     shift
     doAddPlugin "${@}"
+    exit ${?}
+  elif [ "${1}" = "remove-plugin" ]
+  then
+    shift
+    doRemovePlugin "${@}"
     exit ${?}
   elif [ "${1}" = "import" ] 
   then
