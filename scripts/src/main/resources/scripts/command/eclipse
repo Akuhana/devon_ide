@@ -82,30 +82,53 @@ function doInstallEclipsePlugin() {
     plugin=${plugin%.*}
   done
 
-  if [ -n "${plugin_dependencies}" ]
-  then
-    plugin_dependencies=$(echo -e "${plugin_dependencies}" | sort -u)
-    doWarning "Plugin ${original_plugin} might be already installed, because of existing dependencies: \n${plugin_dependencies} \nMake sure the plugin is not already installed by checking the list of installed plugins in the Eclipse IDE. If there's an error and the issue persists, try to remove the plugin manually from the plugins folder or uninstall with the remove-plugin command."
-  fi
+  
 
   # Verify that the plugin can be installed with option -verifyOnly
   # debug_info=$("${ECLIPSE_HOME}/eclipse" -nosplash -vm "${ECLIPSE_JAVA_HOME}/bin/java" -application org.eclipse.equinox.p2.director -repository "${2}" -installIU "${1}")
   # return
   # shellcheck disable=SC2086
   #"${ECLIPSE_HOME}/eclipse" -nosplash -clean -vm "${ECLIPSE_JAVA_HOME}/bin/java" -application org.eclipse.equinox.p2.director -repository "${2}" -installIU "${1}" -tag InitialState -profile SDKProfile -profileProperties org.eclipse.update.install.features=true -destination "${ECLIPSE_HOME}" -bundlepool "${ECLIPSE_HOME}" -roaming -vmargs ${ECLIPSE_VMARGS}
-  local debug_info=$("${ECLIPSE_HOME}/eclipse" -nosplash -clean -vm "${ECLIPSE_JAVA_HOME}/bin/java" -application org.eclipse.equinox.p2.director -repository "${2}" -installIU "${1}" -tag InitialState -profileProperties org.eclipse.update.install.features=true -destination "${ECLIPSE_HOME}" -bundlepool "${ECLIPSE_HOME}" -roaming -vmargs ${ECLIPSE_VMARGS})
-  if [ "${debug_info}" != 0 ]
-  then
+  local debug_info=$("${ECLIPSE_HOME}/eclipse" -nosplash -consoleLog -clean -vm "${ECLIPSE_JAVA_HOME}/bin/java" -application org.eclipse.equinox.p2.director -repository "${2}" -installIU "${1}" -tag InitialState -profileProperties org.eclipse.update.install.features=true -destination "${ECLIPSE_HOME}" -bundlepool "${ECLIPSE_HOME}" -roaming -vmargs ${ECLIPSE_VMARGS})
+  if [[ "${debug_info}" == *"Overall install request is satisfiable"* ]]; then
+    return 0
+  else
     echo
-    doError "Installation of plugin ${plugin} failed. Please try to install manually or rerun setup (devon eclipse setup)."
+    doError "Installation of plugin ${plugin} failed. Please try to install it manually or rerun setup (devon eclipse setup)."
+    if [ -n "${plugin_dependencies}" ]
+    then
+      plugin_dependencies=$(echo -e "${plugin_dependencies}" | sort -u)
+      doWarning "Plugin ${original_plugin} might be already installed, because of existing dependencies: \n${plugin_dependencies} \nMake sure the plugin is not already installed by checking the list of installed plugins in the Eclipse IDE. If there's an error and the issue persists, try to remove the plugin manually from the plugins folder or uninstall with the remove-plugin command."
+    fi
     echo
     return 1
   fi
   return 0
 }
 
+function doCheckPluginsInstalled() {
+  return
+}
+
 function doRemovePlugin() {
-  "${ECLIPSE_HOME}/eclipse" -nosplash -clean -vm "${ECLIPSE_JAVA_HOME}/bin/java" -application org.eclipse.equinox.p2.director -uninstallIU "${1}" -tag InitialState -profile SDKProfile -profileProperties org.eclipse.update.install.features=true -vmargs ${ECLIPSE_VMARGS}
+  if [ -z "${1}" ]
+  then
+    doError "No plugin was specified for removal."
+    return 1
+  fi
+  doLoadPluginProperties "${1}"
+  if [ ! -z ${plugin_id} ] 
+  then
+    doEcho "Removing plugins(s) ${plugin_id}..."
+    local debug_info=$("${ECLIPSE_HOME}/eclipse" -nosplash -clean -consoleLog -vm "${ECLIPSE_JAVA_HOME}/bin/java" -application org.eclipse.equinox.p2.director -uninstallIU "${plugin_id}" -vmargs ${ECLIPSE_VMARGS})
+    # If debug_info contains words The installable unit could not be found, then the plugin was not uninstalled correctly
+    if [[ "${debug_info}" == *"The installable unit ${plugin_id} has not been found"* ]]
+    then
+      doError "Plugin ${plugin_id} couldn't be removed from your Eclipse installation as it was not found. Please check if the plugin exists and try to remove it manually."
+      return 1
+    fi
+    doEcho "Plugin ${1} removed successfully."
+  fi
 }
 
 
@@ -263,12 +286,6 @@ function doAddPlugin() {
     elif [ "${1}" = "templatevariables" ]
     then
       doInstallEclipsePlugin "net.sf.mmm.eclipse.templatevariables.feature.feature.group" "https://m-m-m.github.io/eclipse-templatevariables/latest"
-    elif [ "${1}" = "spotbugs" ]
-    then
-      doInstallEclipsePlugin "com.github.spotbugs.plugin.eclipse.feature.group" "https://spotbugs.github.io/eclipse/"
-    elif [ "${1}" = "checkstyle" ]
-    then
-      doInstallEclipsePlugin "net.sf.eclipsecs.feature.group" "https://checkstyle.org/eclipse-cs-update-site"
     else
       doAddPluginFromConfig "${SETTINGS_PATH}/eclipse/plugins/${1}.properties" "force-manual"
     fi
