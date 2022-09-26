@@ -23,12 +23,13 @@ source "$(dirname "${0}")"/../functions
 L_PWD=$(pwd)
 cd "${DEVON_IDE_HOME}" || exit 255
 
+# Install Eclipse plugins by feature group id
 # $1: plugin feature group ID
 # $2: plugin URL (update site)
 function doInstallEclipsePlugin() {
   # Remove feature.group from each plugin id
   local plugins="${1//.feature.group/}"
-  echo "Installing Eclipse IDE plugins ${plugins} from URL ${2}"
+  echo "Installing Eclipse plugin '${plugin_name}' from URL ${2}"
 
   if [ -z "${plugins}" ]
   then
@@ -36,27 +37,30 @@ function doInstallEclipsePlugin() {
     return
   fi
 
+  doCheckPluginsInstalled "${plugins}"
+
   # Try installing the plugin and get the debug information from the executed command
-  local debug_info=$("${ECLIPSE_HOME}/eclipse" -nosplash -consoleLog -clean -vm "${ECLIPSE_JAVA_HOME}/bin/java" -application org.eclipse.equinox.p2.director -repository "${2}" -installIU "${1}" -tag InitialState -profileProperties org.eclipse.update.install.features=true -destination "${ECLIPSE_HOME}" -bundlepool "${ECLIPSE_HOME}" -roaming -vmargs ${ECLIPSE_VMARGS})
-  if [[ "${debug_info}" == *"Overall install request is satisfiable"* ]]; then
+  # shellcheck disable=SC2086
+  "${ECLIPSE_HOME}/eclipse" -consoleLog -nosplash -vm "${ECLIPSE_JAVA_HOME}/bin/java" -application org.eclipse.equinox.p2.director -repository "${2}" -installIU "${1}" -tag InitialState -profileProperties org.eclipse.update.install.features=true -vmargs ${ECLIPSE_VMARGS}
+  local exit_code=$?
+
+  #if [[ "${debug_info}" == *"Overall install request is satisfiable"* ]] || [ "${exit_code}" == 0 ]; then
+  if [ "${exit_code}" == 0 ]; then
     return 0
   else
     echo
     doError "Installation of plugin '${plugin_name}' failed. Please try installing the plugin manually or running setup again (devon eclipse setup)."
-    local original_plugin=${plugin}
-    local plugin=${plugin/\.feature*/}
-    doCheckPluginsInstalled "${plugins}"
     if [ -n "${plugin_dependencies}" ]
     then
       plugin_dependencies=$(echo -e "${plugin_dependencies}" | sort -u)
       doWarning "Plugin '${plugin_name}' might be already installed, because of existing dependencies: ${plugin_dependencies} \nMake sure the plugin is not installed yet by checking the list of installed plugins in the Eclipse IDE. If there's an error and the issue persists, try to remove the plugin manually from the plugins folder or uninstall it with devon remove-plugin command."
     fi
     echo
-    return 1
+    return ${exit_code}
   fi
 }
 
-# Check if the plugins are already installed
+# Check if the plugins are already installed by looking at the eclipse/plugins folder
 # $1: plugin feature group ID
 # return: dependencies that are already installed
 function doCheckPluginsInstalled() {
@@ -72,7 +76,7 @@ function doCheckPluginsInstalled() {
     plugin_dependencies=$(ls -1 "${plugin_dir}" | grep -o -E "${plugin}\..*\.jar")
     # Remove last word after dot
     while [[ "${plugin}" == *.* ]]; do
-      if [ ${plugin} == "org.eclipse" ] || [ ${plugin} == "org.apache" ] || [ ${plugin} == "com" ] || [ ${plugin} == "org" ]; then
+      if [ ${plugin} == "org.eclipse" ] || [ ${plugin} == "org.apache" ] || [ ${plugin} == "com" ] || [ ${plugin} == "org" ] || [ ${plugin} == "net" ]; then
         break
       fi
       new_plugin_dependencies=$(ls -1 "${plugin_dir}" | grep -o -E "${plugin}\..*\.jar")
@@ -85,6 +89,8 @@ function doCheckPluginsInstalled() {
   done 
 }
 
+# Remove plugins from Eclipse by feature group ID
+# It first removes .installed filed if such exists, then removes the plugin via eclipe command
 function doRemovePlugin() {
   if [ -z "${1}" ]
   then
@@ -100,10 +106,10 @@ function doRemovePlugin() {
   if [ -n "${plugin_id}" ] 
   then
     doEcho "Removing plugin ${1}..."
-    local debug_info=$("${ECLIPSE_HOME}/eclipse" -nosplash -clean -consoleLog -vm "${ECLIPSE_JAVA_HOME}/bin/java" -application org.eclipse.equinox.p2.director -uninstallIU "${plugin_id}" -vmargs ${ECLIPSE_VMARGS})
+    # shellcheck disable=SC2086
+    local debug_info=$("${ECLIPSE_HOME}/eclipsec" -nosplash -clean -consoleLog -vm "${ECLIPSE_JAVA_HOME}/bin/java" -application org.eclipse.equinox.p2.director -uninstallIU "${plugin_id}" -vmargs ${ECLIPSE_VMARGS})
 
     doCheckPluginsInstalled "${plugin_id}"
-
     plugin_id="${plugin_id// /}"
     IFS=',' read -ra plugin_id_arr <<< "${plugin_id}"
     for plugin in ${plugin_id_arr[@]}; do
@@ -200,9 +206,10 @@ function doAddPluginFromConfig() {
         if [ "${result_rc}" = 0 ]
         then
           touch "${install_file}"
+          doSuccess "Plugin ${plugin_name} installed successfully."
         fi
       else
-        doEcho "Plugin ${plugin_name} is already installed. Use 'devon eclipse remove-plugin ${plugin_name}' to remove it."
+        doEcho "Plugin ${plugin_name} is already installed. Use 'devon eclipse remove-plugin ${plugin_name}' if you want to remove it."
       fi
     fi
   elif [ -n "${2}" ]
