@@ -39,23 +39,30 @@ function doInstallEclipsePlugin() {
 
   doCheckPluginsInstalled "${plugins}"
 
-  # Try installing the plugin and get the debug information from the executed command
-  # shellcheck disable=SC2086
-  "${ECLIPSE_HOME}/eclipse" -consoleLog -nosplash -vm "${ECLIPSE_JAVA_HOME}/bin/java" -application org.eclipse.equinox.p2.director -repository "${2}" -installIU "${1}" -tag InitialState -profileProperties org.eclipse.update.install.features=true -vmargs ${ECLIPSE_VMARGS}
-  local exit_code=$?
+  # Install plugins and write debug info into temp file
+  local debug_info_file=$(mktemp)
+  "${ECLIPSE_HOME}/eclipsec" -consoleLog -nosplash -vm "${ECLIPSE_JAVA_HOME}/bin/java" -application org.eclipse.equinox.p2.director -repository "${2}" -installIU "${1}" -vmargs "${ECLIPSE_VMARGS}" > "${debug_info_file}" 2>&1
+  exit_code=$?
+  # Write only lines with !MESSAGE into debug info
+  debug_info=$(grep -E "!MESSAGE" "${debug_info_file}")
+  
 
-  #if [[ "${debug_info}" == *"Overall install request is satisfiable"* ]] || [ "${exit_code}" == 0 ]; then
-  if [ "${exit_code}" == 0 ]; then
+  if [[ "${debug_info}" == *"Overall install request is satisfiable"* ]] && [ "${exit_code}" == 0 ]; then
+    rm "${debug_info_file}"
     return 0
+  elif [[ "${debug_info}" == *"Unable to load repositories"* ]] || [[ "${debug_info}" == *"No repository found at"* ]]; then
+    doError "The given repository ${2} is not a correct update site."
+    rm "${debug_info_file}"
+    return 1
   else
     echo
-    doError "Installation of plugin '${plugin_name}' failed. Please try installing the plugin manually or running setup again (devon eclipse setup)."
+    doError "Installation of plugin '${plugin_name}' failed: \n${debug_info}"
+    rm "${debug_info_file}"
     if [ -n "${plugin_dependencies}" ]
     then
       plugin_dependencies=$(echo -e "${plugin_dependencies}" | sort -u)
       doWarning "Plugin '${plugin_name}' might be already installed, because of existing dependencies: ${plugin_dependencies} \nMake sure the plugin is not installed yet by checking the list of installed plugins in the Eclipse IDE. If there's an error and the issue persists, try to remove the plugin manually from the plugins folder or uninstall it with devon remove-plugin command."
     fi
-    echo
     return ${exit_code}
   fi
 }
@@ -224,6 +231,9 @@ function doAddPlugins() {
     local file
     for file in "${SETTINGS_PATH}"/eclipse/plugins/*.properties
     do
+      # Get plugin name from file name
+      plugin_name="${file/*\//}"
+      plugin_name="${plugin_name/.properties/}"
       doAddPluginFromConfig "${file}"
     done
   else
